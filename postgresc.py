@@ -21,7 +21,7 @@ import subprocess
 import psycopg2
 from socket import socket
 
-CARBON_SERVER = '**.**.**.***'
+CARBON_SERVER = 'localhost'
 CARBON_PORT = 2003
 
 sock = socket()
@@ -33,6 +33,8 @@ except:
 
 conn = psycopg2.connect("dbname=postgres user=postgres")
 cur = conn.cursor()
+
+
 cur.execute("SELECT pg_stat_database.*, \
                 pg_database_size(pg_database.datname) AS size \
                 FROM pg_database JOIN pg_stat_database \
@@ -41,21 +43,39 @@ cur.execute("SELECT pg_stat_database.*, \
                 NOT IN ('template0','template1','postgres')")
 stats = cur.fetchall()
 
+
+cur.execute("SELECT datname, count(datname) \
+                FROM pg_stat_activity GROUP BY pg_stat_activity.datname;")
+connections = cur.fetchall()
+
 now = int( time.time() )
 
 lines = []
-lines.append('atlas.load.numbackends %d %d' % (stat[2], now))
-lines.append('atlas.load.xact_commit %d %d' % (stat[3], now))
-lines.append('atlas.load.xact_rollback %d %d' % (stat[4], now))
-lines.append('atlas.load.blks_read %d %d' % (stat[5], now))
-lines.append('atlas.load.blks_hit %d %d' % (stat[6], now))
-lines.append('atlas.load.tup_returned %d %d' % (stat[7], now))
-lines.append('atlas.load.tup_fetched %d %d' % (stat[8], now))
-lines.append('atlas.load.tup_inserted %d %d' % (stat[9], now))
-lines.append('atlas.load.tup_updated %d %d' % (stat[10], now))
-lines.append('atlas.load.tup_deleted %d %d' % (stat[11], now))
-lines.append('atlas.load.conflicts %d %d' % (stat[12], now))
-lines.append('atlas.load.size %d %d' % (stat[14], now))
+
+ret = {}
+for stat in stats:
+	info = {'numbackends': stat[2],
+            'xact_commit': stat[3],
+            'xact_rollback': stat[4],
+            'blks_read': stat[5],
+            'blks_hit': stat[6],
+            'tup_returned': stat[7],
+            'tup_fetched': stat[8],
+            'tup_inserted': stat[9],
+            'tup_updated': stat[10],
+            'tup_deleted': stat[11],
+            'conflicts': stat[12],
+            'size': stat[14]}
+
+	database = stat[1]
+	ret[database] = info
+
+for database in ret:
+	for (metric, value) in ret[database].items():
+		lines.append('atlas.databases.%s.%s %d %d' % (database, metric, value, now))
+
+for (database, connection) in connections:
+	lines.append('atlas.databases.%s.connections %d %d' % (database, connection, now))
 
 message = '\n'.join(lines) + '\n' #all lines must end in a newline
 sock.sendall(message)
